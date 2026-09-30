@@ -1,6 +1,8 @@
 const prisma = require("../databases/prisma");
 const AlunoInvalidoError = require("../errors/AlunoInvalidoError");
 const AlunoNaoEncontradoError = require("../errors/AlunoNaoEncontradoError");
+const EmailDuplicadoError = require("../errors/EmailDuplicadoError");
+const alunoSchema = require("../schemas/alunoSchema");
 
 // Campos do model Aluno pelos quais é permitido ordenar
 const CAMPOS_ORDENAVEIS = ["id", "nome", "email", "createdAt", "updatedAt"];
@@ -54,6 +56,55 @@ class AlunoService{
         }
 
         return aluno;
+    }
+
+    async update(id, dados){
+        const idNumerico = Number(id);
+        if(!Number.isInteger(idNumerico)){
+            throw new AlunoInvalidoError("Id inválido.");
+        }
+
+        // Dados inválidos: reaproveita AlunoInvalidoError (400), pois é o mesmo
+        // tipo de problema do create (dados enviados fora do esperado).
+        // O schema parcial aceita nome e/ou email e descarta qualquer outro campo.
+        const resultado = alunoSchema.partial().safeParse(dados ?? {});
+        if(!resultado.success){
+            const mensagem = resultado.error.issues.map((i)=> i.message).join(" ");
+            throw new AlunoInvalidoError(mensagem);
+        }
+        const data = resultado.data;
+        if(Object.keys(data).length === 0){
+            throw new AlunoInvalidoError("Informe nome e/ou email para atualizar.");
+        }
+
+        // Aluno não encontrado: reaproveita a exceção do findUnique (404).
+        // Também confirma que o aluno existe antes do update.
+        await this.findUnique(idNumerico);
+
+        // Email duplicado: exceção própria (409). Verifica se o email já
+        // pertence a OUTRO aluno (o próprio aluno pode reenviar o mesmo email).
+        if(data.email){
+            const existente = await prisma.aluno.findUnique({
+                where: { email: data.email }
+            });
+            if(existente && existente.id !== idNumerico){
+                throw new EmailDuplicadoError();
+            }
+        }
+
+        try{
+            // UPDATE alunos SET ... WHERE id = ?
+            return await prisma.aluno.update({
+                where: { id: idNumerico },
+                data
+            });
+        }catch(e){
+            // P2002 = violação de @unique (proteção contra condição de corrida)
+            if(e.code === "P2002"){
+                throw new EmailDuplicadoError();
+            }
+            throw e;
+        }
     }
 
     async create(aluno){
