@@ -107,6 +107,21 @@ class AlunoService{
         }
     }
 
+    async delete(id){
+        const idNumerico = Number(id);
+        if(!Number.isInteger(idNumerico)){
+            throw new AlunoInvalidoError("Id inválido.");
+        }
+
+        // Aluno não encontrado: findUnique já lança AlunoNaoEncontradoError (404)
+        await this.findUnique(idNumerico);
+
+        // DELETE FROM alunos WHERE id = ?
+        await prisma.aluno.delete({
+            where: { id: idNumerico }
+        });
+    }
+
     async create(aluno){
         const {nome, email} = aluno;
         if(!nome || !email){
